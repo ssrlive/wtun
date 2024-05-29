@@ -22,6 +22,7 @@ use crate::{
   ntdll::RtlGetNtVersionNumbers,
 };
 
+#[derive(Clone, Copy)]
 pub struct SystemParams {
   pub security_attributes: SECURITY_ATTRIBUTES,
   pub is_local_system: bool,
@@ -53,8 +54,9 @@ impl std::fmt::Debug for SystemParams {
 }
 unsafe impl Sync for SystemParams {}
 pub unsafe fn get_system_params<'a>() -> &'a mut SystemParams {
-  static mut SYSTEM_PARAMS: std::cell::UnsafeCell<SystemParams> =
-    std::cell::UnsafeCell::new(SystemParams {
+  static mut INIT: std::sync::OnceLock<SystemParams> = std::sync::OnceLock::new();
+  let _ = INIT.get_or_init(|| {
+    static mut SYSTEM_PARAMS: SystemParams = SystemParams {
       security_attributes: SECURITY_ATTRIBUTES {
         nLength: csizeof!(SECURITY_ATTRIBUTES),
         lpSecurityDescriptor: std::ptr::null_mut(),
@@ -64,28 +66,24 @@ pub unsafe fn get_system_params<'a>() -> &'a mut SystemParams {
       native_machine: 0,
       is_windows7: false,
       is_windows10: true,
-    });
-  static mut INIT: std::sync::OnceLock<&'static std::cell::UnsafeCell<SystemParams>> =
-    std::sync::OnceLock::new();
-  &mut *INIT
-    .get_or_init(|| {
-      let params = &mut *SYSTEM_PARAMS.get();
+    };
+
       let (security_attributes, is_local_system) = initialize_security_objects().unwrap();
       let (is_windows7, is_windows10, native_machine) = env_init();
       unsafe {
         namespace_init();
       }
       cleanup_lagacy_devices();
-      *params = SystemParams {
+      SYSTEM_PARAMS = SystemParams {
         security_attributes,
         is_local_system,
         native_machine,
         is_windows7,
         is_windows10,
       };
-      &SYSTEM_PARAMS
-    })
-    .get()
+      SYSTEM_PARAMS
+    });
+    unsafe { INIT.get_mut().expect("INIT.get_mut()") }
 }
 fn initialize_security_objects() -> std::io::Result<(SECURITY_ATTRIBUTES, bool)> {
   let mut security_attributes = SECURITY_ATTRIBUTES {
@@ -177,13 +175,13 @@ fn env_init() -> (bool, bool, USHORT) {
     )
   };
   #[cfg(feature = "windows7")]
-  let is_windows7 = MajorVersion == 6 && MinorVersion == 1;
+  let is_windows7 = major_version == 6 && minor_version == 1;
   #[cfg(not(feature = "windows7"))]
   let is_windows7 = false;
   #[cfg(feature = "windows10")]
   let is_windows10 = true;
   #[cfg(not(feature = "windows10"))]
-  let is_windows10 = MajorVersion > 10;
+  let is_windows10 = major_version > 10;
   let mut native_machine = IMAGE_FILE_PROCESS;
   #[cfg(any(target_arch = "x86", target_arch = "arm", target_arch = "x86_64"))]
   {

@@ -1,4 +1,5 @@
+.VSCodeCounter/
 /target
 /Cargo.lock
-.vscode
+.vscode/
 **/target
